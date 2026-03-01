@@ -96,7 +96,7 @@ public class Webview {
     @discardableResult
     public func setSize(_ width: Int32, _ height: Int32, _ hint: SizeHint) -> Webview {
         if !destroyed {
-            webview_set_size(wv, width, height, hint.rawValue)
+            webview_set_size(wv, width, height, webview_hint_t(rawValue: UInt32(hint.rawValue)))
         }
         return self
     }
