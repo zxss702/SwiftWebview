@@ -11,7 +11,7 @@ func parseCallbackArgs(_ json: String) -> [Any]? {
     return try? JSONSerialization.jsonObject(with: data) as? [Any]
 }
 
-struct CallbackContext {
+class CallbackContext {
     var webview: webview_t
     var callback: JSCallback
 
@@ -42,7 +42,11 @@ public class Webview: @unchecked Sendable {
     /// Initializes a Webview
     /// - Parameter debug: Debug mode flag.
     public init(_ debug: Bool = false) {
-        wv = webview_create(debug ? 1 : 0, nil)
+        let created = webview_create(debug ? 1 : 0, nil)
+        guard let validWv = created else {
+            fatalError("Failed to initialize Webview. On Linux this usually means no Display/X11 server is available (Try using xvfb-run).")
+        }
+        wv = validWv
     }
 
     deinit {
@@ -136,7 +140,7 @@ public class Webview: @unchecked Sendable {
         guard !destroyed else {
             return self
         }
-        var context = CallbackContext(wv, callback)
+        let context = CallbackContext(wv, callback)
         callbacks[name] = context
 
         let bridge: CCallback = { seq, req, arg in
@@ -144,8 +148,8 @@ public class Webview: @unchecked Sendable {
                 return
             }
 
-            let ctxPointer = arg.bindMemory(to: CallbackContext.self, capacity: 1)
-            let ctx = ctxPointer.pointee
+            // 使用 takeUnretainedValue 读取，不消耗引用计数（引用由 passRetained 持有）
+            let ctx = Unmanaged<CallbackContext>.fromOpaque(arg).takeUnretainedValue()
 
             let args = parseCallbackArgs(String(cString: req)) ?? []
 
@@ -163,9 +167,8 @@ public class Webview: @unchecked Sendable {
             }
         }
 
-        let contextPtr = withUnsafeMutablePointer(to: &context) { ptr in
-            UnsafeMutableRawPointer(ptr)
-        }
+        // 使用 passRetained 确保 C 层持有的指针有有效的引用计数保护
+        let contextPtr = Unmanaged.passRetained(context).toOpaque()
 
         webview_bind(wv, name, bridge, contextPtr)
         return self
@@ -176,7 +179,10 @@ public class Webview: @unchecked Sendable {
     @discardableResult
     public func unbind(_ name: String) -> Webview {
         if !destroyed {
-            callbacks[name] = nil
+            // 先取出 context，如果存在则释放 passRetained 时增加的引用
+            if let context = callbacks.removeValue(forKey: name) {
+                Unmanaged.passUnretained(context).release()
+            }
             webview_unbind(wv, name)
         }
         return self
@@ -188,8 +194,14 @@ public class Webview: @unchecked Sendable {
     @discardableResult
     public func destroy() -> Webview {
         if !destroyed {
-            callbacks.forEach { key, _ in
-                unbind(key)
+            // 先收集所有 key，避免在遍历中修改字典
+            let keys = Array(callbacks.keys)
+            for key in keys {
+                // 释放 passRetained 增加的引用
+                if let context = callbacks.removeValue(forKey: key) {
+                    Unmanaged.passUnretained(context).release()
+                }
+                webview_unbind(wv, key)
             }
             callbacks.removeAll()
             webview_destroy(wv)
