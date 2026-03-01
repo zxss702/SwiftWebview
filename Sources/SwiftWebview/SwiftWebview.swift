@@ -21,13 +21,6 @@ class CallbackContext {
     }
 }
 
-private class DispatchContext {
-    let closure: () -> Void
-    init(_ closure: @escaping () -> Void) {
-        self.closure = closure
-    }
-}
-
 /// Used to set the width & height properties of a webview
 public enum SizeHint: Int32 {
     /// Width and Height are the default size.
@@ -69,28 +62,13 @@ public class Webview: @unchecked Sendable {
         }
     }
 
-    /// Safely schedules a closure to be executed on the webview's native UI thread.
-    public func dispatch(_ closure: @escaping () -> Void) {
-        if !destroyed {
-            let context = DispatchContext(closure)
-            let ptr = Unmanaged.passRetained(context).toOpaque()
-            webview_dispatch(wv, { w, arg in
-                guard let arg = arg else { return }
-                let ctx = Unmanaged<DispatchContext>.fromOpaque(arg).takeRetainedValue()
-                ctx.closure()
-            }, ptr)
-        }
-    }
-
     /// Navigates the webview to the specified URL.
     /// - Parameter url: The URL to navigate to.
     /// - Returns: The current instance of Webview for chaining.
     @discardableResult
     public func navigate(_ url: String) -> Webview {
-        let u = url
-        self.dispatch { [weak self] in
-            guard let self = self, !self.destroyed else { return }
-            webview_navigate(self.wv, u)
+        if !destroyed {
+            webview_navigate(wv, url)
         }
         return self
     }
@@ -100,10 +78,8 @@ public class Webview: @unchecked Sendable {
     /// - Returns: The current instance of Webview for chaining.
     @discardableResult
     public func setHtml(_ html: String) -> Webview {
-        let h = html
-        self.dispatch { [weak self] in
-            guard let self = self, !self.destroyed else { return }
-            webview_set_html(self.wv, h)
+        if !destroyed {
+            webview_set_html(wv, html)
         }
         return self
     }
@@ -113,10 +89,8 @@ public class Webview: @unchecked Sendable {
     /// - Returns: The current instance of Webview for chaining.
     @discardableResult
     public func setTitle(_ title: String) -> Webview {
-        let t = title
-        self.dispatch { [weak self] in
-            guard let self = self, !self.destroyed else { return }
-            webview_set_title(self.wv, t)
+        if !destroyed {
+            webview_set_title(wv, title)
         }
         return self
     }
@@ -126,9 +100,8 @@ public class Webview: @unchecked Sendable {
     /// - Returns: The current instance of Webview for chaining.
     @discardableResult
     public func setSize(_ width: Int32, _ height: Int32, _ hint: SizeHint) -> Webview {
-        self.dispatch { [weak self] in
-            guard let self = self, !self.destroyed else { return }
-            webview_set_size(self.wv, width, height, webview_hint_t(rawValue: UInt32(hint.rawValue)))
+        if !destroyed {
+            webview_set_size(wv, width, height, webview_hint_t(rawValue: UInt32(hint.rawValue)))
         }
         return self
     }
@@ -139,10 +112,8 @@ public class Webview: @unchecked Sendable {
     /// - Returns: The current instance of Webview for chaining.
     @discardableResult
     public func inject(_ js: String) -> Webview {
-        let j = js
-        self.dispatch { [weak self] in
-            guard let self = self, !self.destroyed else { return }
-            webview_init(self.wv, j)
+        if !destroyed {
+            webview_init(wv, js)
         }
         return self
     }
@@ -154,10 +125,8 @@ public class Webview: @unchecked Sendable {
     /// - Returns: The current instance of Webview for chaining.
     @discardableResult
     public func eval(_ js: String) -> Webview {
-        let j = js
-        self.dispatch { [weak self] in
-            guard let self = self, !self.destroyed else { return }
-            webview_eval(self.wv, j)
+        if !destroyed {
+            webview_eval(wv, js)
         }
         return self
     }
@@ -209,14 +178,12 @@ public class Webview: @unchecked Sendable {
     /// Parameter name: The name of the JavaScript function to unbind.
     @discardableResult
     public func unbind(_ name: String) -> Webview {
-        let n = name
-        self.dispatch { [weak self] in
-            guard let self = self, !self.destroyed else { return }
+        if !destroyed {
             // 先取出 context，如果存在则释放 passRetained 时增加的引用
-            if let context = self.callbacks.removeValue(forKey: n) {
+            if let context = callbacks.removeValue(forKey: name) {
                 Unmanaged.passUnretained(context).release()
             }
-            webview_unbind(self.wv, n)
+            webview_unbind(wv, name)
         }
         return self
     }
@@ -275,9 +242,7 @@ public class Webview: @unchecked Sendable {
             let isError = (args.count > 1 && args[1] as? Bool == true)
             let resultStr = args.count > 2 ? (args[2] as? String ?? "") : ""
             
-            // 使用 continuation 前确保持有该引用，由于 dispatch 和 binding 是多线程行为
-            // 但 swift 层面有 `DispatchQueue.main` 或并发队列保护，这里我们将它转到 task 内部
-            Task {
+            DispatchQueue.main.async {
                 if let continuation = self?.continuations.removeValue(forKey: id) {
                     if isError {
                         continuation.resume(throwing: EvalError.executionError(resultStr))
@@ -325,8 +290,7 @@ public class Webview: @unchecked Sendable {
         """
         
         return try await withCheckedThrowingContinuation { continuation in
-            self.dispatch { [weak self] in
-                guard let self = self else { return }
+            DispatchQueue.main.async {
                 self.continuations[id] = continuation
                 self.eval(wrappedJS)
             }
