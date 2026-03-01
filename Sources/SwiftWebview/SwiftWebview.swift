@@ -11,6 +11,12 @@ func parseCallbackArgs(_ json: String) -> [Any]? {
     return try? JSONSerialization.jsonObject(with: data) as? [Any]
 }
 
+/// 通用包装类，用于将值类型/闭包通过指针传给 C 层
+private class Box<T> {
+    let value: T
+    init(_ value: T) { self.value = value }
+}
+
 class CallbackContext {
     var webview: webview_t
     var callback: JSCallback
@@ -60,6 +66,23 @@ public class Webview: @unchecked Sendable {
         if !destroyed {
             webview_run(wv)
         }
+    }
+
+    /// 将闭包调度到 webview 的 UI 事件循环线程上执行。
+    ///
+    /// 在 Linux 上，`webview_run()` 启动 GTK 主循环，它与 Swift 的
+    /// `@MainActor` (libdispatch 主队列) 互不兼容。因此从后台线程
+    /// 操作 webview 时，必须通过此方法进行调度，而不是依赖 `@MainActor`。
+    /// - Parameter work: 需要在 UI 线程上执行的闭包。
+    public func dispatch(_ work: @escaping () -> Void) {
+        guard !destroyed else { return }
+        // 使用 Box 包装闭包，通过指针传递给 C 回调
+        let boxed = Unmanaged.passRetained(Box(work)).toOpaque()
+        webview_dispatch(wv, { _, arg in
+            guard let arg = arg else { return }
+            let box = Unmanaged<Box<() -> Void>>.fromOpaque(arg).takeRetainedValue()
+            box.value()
+        }, boxed)
     }
 
     /// Navigates the webview to the specified URL.
@@ -242,7 +265,9 @@ public class Webview: @unchecked Sendable {
             let isError = (args.count > 1 && args[1] as? Bool == true)
             let resultStr = args.count > 2 ? (args[2] as? String ?? "") : ""
             
-            DispatchQueue.main.async {
+            // 使用 webview_dispatch 替代 DispatchQueue.main.async，
+            // 因为 Linux 上 GTK 主循环与 libdispatch 主队列互不兼容
+            self?.dispatch {
                 if let continuation = self?.continuations.removeValue(forKey: id) {
                     if isError {
                         continuation.resume(throwing: EvalError.executionError(resultStr))
@@ -290,7 +315,9 @@ public class Webview: @unchecked Sendable {
         """
         
         return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.main.async {
+            // 使用 webview_dispatch 替代 DispatchQueue.main.async，
+            // 确保在正确的事件循环线程上操作 webview
+            self.dispatch {
                 self.continuations[id] = continuation
                 self.eval(wrappedJS)
             }
