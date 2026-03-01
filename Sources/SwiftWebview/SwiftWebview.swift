@@ -33,7 +33,8 @@ public enum SizeHint: Int32 {
     case Max = 3
 }
 
-public class Webview {
+@available(macOS 10.15, *)
+public class Webview: @unchecked Sendable {
     private var wv: webview_t
     private var destroyed: Bool = false
     private var callbacks: [String: CallbackContext] = [:]
@@ -206,5 +207,81 @@ public class Webview {
             webview_terminate(wv)
         }
         return self
+    }
+
+    // MARK: - Async Evaluation
+
+    private var continuations: [String: CheckedContinuation<String, Error>] = [:]
+    private var isReturnHelperBound: Bool = false
+
+    /// Error thrown during evaluating JavaScript
+    public enum EvalError: Error {
+        case destroyed
+        case executionError(String)
+        case scriptTimeout
+    }
+
+    private func bindReturnHelperIfNeeded() {
+        guard !isReturnHelperBound else { return }
+        isReturnHelperBound = true
+        
+        self.bind("__swift_webview_return__") { [weak self] args in
+            guard let id = args.first as? String else { return "{}" }
+            let isError = (args.count > 1 && args[1] as? Bool == true)
+            let resultStr = args.count > 2 ? (args[2] as? String ?? "") : ""
+            
+            DispatchQueue.main.async {
+                if let continuation = self?.continuations.removeValue(forKey: id) {
+                    if isError {
+                        continuation.resume(throwing: EvalError.executionError(resultStr))
+                    } else {
+                        continuation.resume(returning: resultStr)
+                    }
+                }
+            }
+            
+            return "{}"
+        }
+    }
+
+    /// Evaluates JavaScript code asynchronously and returns its result as a JSON string.
+    /// - Parameter js: The JavaScript code to evaluate.
+    /// - Returns: The JSON stringified result of the evaluation.
+    public func evaluateJavaScript(_ js: String) async throws -> String {
+        guard !destroyed else {
+            throw EvalError.destroyed
+        }
+        
+        bindReturnHelperIfNeeded()
+
+        let id = UUID().uuidString
+        
+        // We wrap the user's JS in an async IIFE.
+        // It executes the code, checks if it's a promise, awaits if so,
+        // and stringifies the result before sending it back via our bound helper.
+        let wrappedJS = """
+        (async function() {
+            try {
+                var __user_exec__ = (function() {
+                    \(js)
+                });
+                var __res__ = __user_exec__();
+                if (__res__ instanceof Promise) {
+                    __res__ = await __res__;
+                }
+                var __json__ = JSON.stringify(__res__);
+                window.__swift_webview_return__("\(id)", false, __json__ == undefined ? "" : __json__);
+            } catch (e) {
+                window.__swift_webview_return__("\(id)", true, e.toString());
+            }
+        })();
+        """
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.main.async {
+                self.continuations[id] = continuation
+                self.eval(wrappedJS)
+            }
+        }
     }
 }
