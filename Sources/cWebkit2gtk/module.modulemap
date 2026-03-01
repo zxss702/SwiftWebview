@@ -1,5 +1,5 @@
 module cWebkit2gtk [system] {
-    header "/usr/include/webkitgtk-4.0/webkit2/webkit2.h"
+    header "webkit2/webkit2.h"
     link "webkit2gtk-4.0"
     export *
 }
