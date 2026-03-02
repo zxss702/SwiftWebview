@@ -334,8 +334,15 @@ public final class Webview: @unchecked Sendable {
                 if (__res__ instanceof Promise) {
                     __res__ = await __res__;
                 }
-                var __json__ = JSON.stringify(__res__);
-                window.__swift_webview_return__("\(id)", false, __json__ == undefined ? "" : __json__);
+                var __out__;
+                if (__res__ === undefined || __res__ === null) {
+                    __out__ = "";
+                } else if (typeof __res__ === "string") {
+                    __out__ = __res__;
+                } else {
+                    __out__ = JSON.stringify(__res__);
+                }
+                window.__swift_webview_return__("\(id)", false, __out__);
             } catch (e) {
                 window.__swift_webview_return__("\(id)", true, e.toString());
             }
