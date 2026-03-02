@@ -1,25 +1,36 @@
 import cWebview
 import Foundation
 
-typealias CCallback = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
-public typealias JSCallback = ([Any]) throws -> Codable
+#if canImport(WebKit)
+import WebKit
+#elseif canImport(cWebkit2gtk)
+import cWebkit2gtk
+#endif
 
-func parseCallbackArgs(_ json: String) -> [Any]? {
-    guard let data = json.data(using: .utf8) else {
-        return nil
-    }
-    return try? JSONSerialization.jsonObject(with: data) as? [Any]
-}
+// MARK: - 辅助类型
+
+/// C 层回调函数签名
+typealias CCallback = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
+
+/// JS 回调函数签名
+public typealias JSCallback = @Sendable ([Any]) throws -> Codable
 
 /// 通用包装类，用于将值类型/闭包通过指针传给 C 层
-private class Box<T> {
+private final class Box<T>: @unchecked Sendable {
     let value: T
     init(_ value: T) { self.value = value }
 }
 
-class CallbackContext {
-    var webview: webview_t
-    var callback: JSCallback
+/// 解析 JS 回调参数 JSON
+private func parseCallbackArgs(_ json: String) -> [Any]? {
+    guard let data = json.data(using: .utf8) else { return nil }
+    return try? JSONSerialization.jsonObject(with: data) as? [Any]
+}
+
+/// 回调上下文，持有 webview 指针和 Swift 回调闭包
+private final class CallbackContext: @unchecked Sendable {
+    let webview: webview_t
+    let callback: JSCallback
 
     init(_ wv: webview_t, _ cb: @escaping JSCallback) {
         webview = wv
@@ -27,41 +38,64 @@ class CallbackContext {
     }
 }
 
-/// Used to set the width & height properties of a webview
-public enum SizeHint: Int32 {
-    /// Width and Height are the default size.
+// MARK: - SizeHint
+
+/// 窗口大小提示
+public enum SizeHint: Int32, Sendable {
+    /// 默认大小
     case None = 0
-    /// Window size cannot be changed by the user.
+    /// 固定大小，用户不可调整
     case Fixed = 1
-    /// Width and height are the minimum bounds.
+    /// 最小边界
     case Min = 2
-    /// Width and height are the maximum bounds.
+    /// 最大边界
     case Max = 3
 }
 
+// MARK: - Webview
+
+/// 跨平台 Webview 封装。
+///
+/// 标记为 `@MainActor` 确保所有 UI 操作在主线程执行。
+/// 注意：在 Linux 上 `run()` 启动 GTK 主循环，它与 Swift 的
+/// `@MainActor`/libdispatch 主队列互不兼容，因此从后台线程操作
+/// webview 时应通过 `dispatch(_:)` 进行调度。
 @available(macOS 10.15, *)
-public class Webview: @unchecked Sendable {
-    private var wv: webview_t
-    private var destroyed: Bool = false
+@MainActor
+public final class Webview {
+    /// C 层 webview 指针。标记为 nonisolated(unsafe) 使
+    /// nonisolated 方法（dispatch、terminate）可直接访问。
+    /// 指针本身只读且线程安全，实际操作由各方法保证安全性。
+    nonisolated(unsafe) private let wv: webview_t
+
+    /// 是否已销毁。nonisolated(unsafe) 因为 deinit（nonisolated）需要读取，
+    /// dispatch（nonisolated）也需要检查。写入只在 destroy() 中发生（@MainActor）。
+    nonisolated(unsafe) private var destroyed: Bool = false
+
     private var callbacks: [String: CallbackContext] = [:]
 
-    /// Initializes a Webview
-    /// - Parameter debug: Debug mode flag.
+    /// 初始化 Webview。
+    /// - Parameter debug: 是否启用开发者工具。
     public init(_ debug: Bool = false) {
         let created = webview_create(debug ? 1 : 0, nil)
         guard let validWv = created else {
-            fatalError("Failed to initialize Webview. On Linux this usually means no Display/X11 server is available (Try using xvfb-run).")
+            fatalError("初始化 Webview 失败。在 Linux 上通常意味着没有可用的 Display/X11（尝试使用 xvfb-run）。")
         }
         wv = validWv
     }
 
     deinit {
+        // deinit 是 nonisolated，不能调用 @MainActor 的 destroy()。
+        // 直接调用 C API 做最小清理（跳过 callback unbind，因为 webview 即将销毁）。
         if !destroyed {
-            destroy()
+            webview_destroy(wv)
+            destroyed = true
         }
     }
 
-    /// Runs the webview. This is blocks the main thread
+    // MARK: - 主循环
+
+    /// 启动 webview 主循环，阻塞当前线程。
     public func run() {
         if !destroyed {
             webview_run(wv)
@@ -70,24 +104,24 @@ public class Webview: @unchecked Sendable {
 
     /// 将闭包调度到 webview 的 UI 事件循环线程上执行。
     ///
-    /// 在 Linux 上，`webview_run()` 启动 GTK 主循环，它与 Swift 的
-    /// `@MainActor` (libdispatch 主队列) 互不兼容。因此从后台线程
-    /// 操作 webview 时，必须通过此方法进行调度，而不是依赖 `@MainActor`。
-    /// - Parameter work: 需要在 UI 线程上执行的闭包。
-    public func dispatch(_ work: @escaping () -> Void) {
+    /// 在 Linux 上 `webview_run()` 启动 GTK 主循环，与 Swift 的
+    /// `@MainActor`(libdispatch 主队列) 互不兼容。从后台线程操作
+    /// webview 时，必须通过此方法调度，而不是依赖 `@MainActor`。
+    ///
+    /// `nonisolated` 使其可从任意线程/Actor 调用。
+    nonisolated public func dispatch(_ work: @escaping @Sendable () -> Void) {
         guard !destroyed else { return }
-        // 使用 Box 包装闭包，通过指针传递给 C 回调
         let boxed = Unmanaged.passRetained(Box(work)).toOpaque()
         webview_dispatch(wv, { _, arg in
             guard let arg = arg else { return }
-            let box = Unmanaged<Box<() -> Void>>.fromOpaque(arg).takeRetainedValue()
+            let box = Unmanaged<Box<@Sendable () -> Void>>.fromOpaque(arg).takeRetainedValue()
             box.value()
         }, boxed)
     }
 
-    /// Navigates the webview to the specified URL.
-    /// - Parameter url: The URL to navigate to.
-    /// - Returns: The current instance of Webview for chaining.
+    // MARK: - 导航与内容
+
+    /// 导航到指定 URL。
     @discardableResult
     public func navigate(_ url: String) -> Webview {
         if !destroyed {
@@ -96,9 +130,7 @@ public class Webview: @unchecked Sendable {
         return self
     }
 
-    /// Sets the HTML content of the webview.
-    /// - Parameter html: The HTML content to set.
-    /// - Returns: The current instance of Webview for chaining.
+    /// 设置 HTML 内容。
     @discardableResult
     public func setHtml(_ html: String) -> Webview {
         if !destroyed {
@@ -107,9 +139,9 @@ public class Webview: @unchecked Sendable {
         return self
     }
 
-    /// Sets the title of the webview.
-    /// - Parameter title: The title to set.
-    /// - Returns: The current instance of Webview for chaining.
+    // MARK: - 窗口属性
+
+    /// 设置窗口标题。
     @discardableResult
     public func setTitle(_ title: String) -> Webview {
         if !destroyed {
@@ -118,9 +150,7 @@ public class Webview: @unchecked Sendable {
         return self
     }
 
-    /// Sets the title of the webview.
-    /// - Parameter title: The title to set.
-    /// - Returns: The current instance of Webview for chaining.
+    /// 设置窗口大小。
     @discardableResult
     public func setSize(_ width: Int32, _ height: Int32, _ hint: SizeHint) -> Webview {
         if !destroyed {
@@ -129,10 +159,9 @@ public class Webview: @unchecked Sendable {
         return self
     }
 
-    /// Injects & executes JavaScript code into every new page in the webview.
-    /// It is guaranteed that this will execute before `window.onload`
-    /// - Parameter js: The JavaScript code to inject.
-    /// - Returns: The current instance of Webview for chaining.
+    // MARK: - JavaScript
+
+    /// 注入 JS 代码到每个新页面，保证在 `window.onload` 之前执行。
     @discardableResult
     public func inject(_ js: String) -> Webview {
         if !destroyed {
@@ -141,11 +170,7 @@ public class Webview: @unchecked Sendable {
         return self
     }
 
-    /// Evaluates JavaScript code in the webview. Evaluation happens asynchronously.
-    /// The result of the JavaScript is ignored.
-    /// Execute a function bound with `bind` if you need two way communication.
-    /// - Parameter js: The JavaScript code to evaluate.
-    /// - Returns: The current instance of Webview for chaining.
+    /// 执行 JS 代码（fire-and-forget，不返回结果）。
     @discardableResult
     public func eval(_ js: String) -> Webview {
         if !destroyed {
@@ -154,26 +179,18 @@ public class Webview: @unchecked Sendable {
         return self
     }
 
-    /// Binds a swift function to a named JavaScript function in the global scope.
-    /// - Parameter name: The name that will be used to invoke the function in JavaScript.
-    /// - Parameter callback: The swift function to execute when the JS function is invoked
-    /// - Returns: The current instance of Webview for chaining.
+    /// 绑定 Swift 函数到全局 JS 函数。
     @discardableResult
     public func bind(_ name: String, _ callback: @escaping JSCallback) -> Webview {
-        guard !destroyed else {
-            return self
-        }
+        guard !destroyed else { return self }
+
         let context = CallbackContext(wv, callback)
         callbacks[name] = context
 
         let bridge: CCallback = { seq, req, arg in
-            guard let seq = seq, let req = req, let arg = arg else {
-                return
-            }
+            guard let seq = seq, let req = req, let arg = arg else { return }
 
-            // 使用 takeUnretainedValue 读取，不消耗引用计数（引用由 passRetained 持有）
             let ctx = Unmanaged<CallbackContext>.fromOpaque(arg).takeUnretainedValue()
-
             let args = parseCallbackArgs(String(cString: req)) ?? []
 
             do {
@@ -190,19 +207,15 @@ public class Webview: @unchecked Sendable {
             }
         }
 
-        // 使用 passRetained 确保 C 层持有的指针有有效的引用计数保护
         let contextPtr = Unmanaged.passRetained(context).toOpaque()
-
         webview_bind(wv, name, bridge, contextPtr)
         return self
     }
 
-    /// Unbinds a function and removes it from the global JavaScript scope
-    /// Parameter name: The name of the JavaScript function to unbind.
+    /// 解绑全局 JS 函数。
     @discardableResult
     public func unbind(_ name: String) -> Webview {
         if !destroyed {
-            // 先取出 context，如果存在则释放 passRetained 时增加的引用
             if let context = callbacks.removeValue(forKey: name) {
                 Unmanaged.passUnretained(context).release()
             }
@@ -211,16 +224,14 @@ public class Webview: @unchecked Sendable {
         return self
     }
 
-    /// Destroys the webview and closes the window.
-    /// Once a Webview has been destroyed it cannot be used.
-    /// Returns: The current instance of Webview for chaining.
+    // MARK: - 生命周期
+
+    /// 销毁 webview 并关闭窗口。销毁后不可再使用。
     @discardableResult
     public func destroy() -> Webview {
         if !destroyed {
-            // 先收集所有 key，避免在遍历中修改字典
             let keys = Array(callbacks.keys)
             for key in keys {
-                // 释放 passRetained 增加的引用
                 if let context = callbacks.removeValue(forKey: key) {
                     Unmanaged.passUnretained(context).release()
                 }
@@ -233,15 +244,34 @@ public class Webview: @unchecked Sendable {
         return self
     }
 
-    /// Terminates the main loop and closes the window.
-    /// This function is thread safe.
-    /// Returns: The current instance of Webview for chaining.
+    /// 终止主循环并关闭窗口。此方法是线程安全的。
+    ///
+    /// `nonisolated` 因为 C API 文档明确声明 `webview_terminate` 线程安全。
     @discardableResult
-    public func terminate() -> Webview {
-        if !destroyed {
-            webview_terminate(wv)
-        }
+    nonisolated public func terminate() -> Webview {
+        webview_terminate(wv)
         return self
+    }
+
+    // MARK: - Loading State
+
+    /// 当前页面是否正在加载。
+    ///
+    /// 通过 `webview_get_native_handle` 获取底层浏览器控制器，
+    /// 在 macOS 上读取 `WKWebView.isLoading`，
+    /// 在 Linux 上调用 `webkit_web_view_is_loading()`。
+    public var isLoading: Bool {
+        guard !destroyed else { return false }
+        let handle = webview_get_native_handle(wv, WEBVIEW_NATIVE_HANDLE_KIND_BROWSER_CONTROLLER)
+        guard let handle = handle else { return false }
+        #if canImport(WebKit)
+        let webView = Unmanaged<WKWebView>.fromOpaque(handle).takeUnretainedValue()
+        return webView.isLoading
+        #elseif canImport(cWebkit2gtk)
+        return webkit_web_view_is_loading(OpaquePointer(handle)) != 0
+        #else
+        return false
+        #endif
     }
 
     // MARK: - Async Evaluation
@@ -249,8 +279,8 @@ public class Webview: @unchecked Sendable {
     private var continuations: [String: CheckedContinuation<String, Error>] = [:]
     private var isReturnHelperBound: Bool = false
 
-    /// Error thrown during evaluating JavaScript
-    public enum EvalError: Error {
+    /// JavaScript 执行错误
+    public enum EvalError: Error, Sendable {
         case destroyed
         case executionError(String)
         case scriptTimeout
@@ -259,43 +289,42 @@ public class Webview: @unchecked Sendable {
     private func bindReturnHelperIfNeeded() {
         guard !isReturnHelperBound else { return }
         isReturnHelperBound = true
-        
+
         self.bind("__swift_webview_return__") { [weak self] args in
             guard let id = args.first as? String else { return "{}" }
             let isError = (args.count > 1 && args[1] as? Bool == true)
             let resultStr = args.count > 2 ? (args[2] as? String ?? "") : ""
-            
-            // 使用 webview_dispatch 替代 DispatchQueue.main.async，
-            // 因为 Linux 上 GTK 主循环与 libdispatch 主队列互不兼容
-            self?.dispatch {
-                if let continuation = self?.continuations.removeValue(forKey: id) {
-                    if isError {
-                        continuation.resume(throwing: EvalError.executionError(resultStr))
-                    } else {
-                        continuation.resume(returning: resultStr)
+
+            // dispatch 将闭包调度到 UI 事件循环线程（即主线程），
+            // 使用 assumeIsolated 断言主线程隔离以访问 @MainActor 状态
+            self?.dispatch { [weak self] in
+                MainActor.assumeIsolated {
+                    if let continuation = self?.continuations.removeValue(forKey: id) {
+                        if isError {
+                            continuation.resume(throwing: EvalError.executionError(resultStr))
+                        } else {
+                            continuation.resume(returning: resultStr)
+                        }
                     }
                 }
             }
-            
+
             return "{}"
         }
     }
 
-    /// Evaluates JavaScript code asynchronously and returns its result as a JSON string.
-    /// - Parameter js: The JavaScript code to evaluate.
-    /// - Returns: The JSON stringified result of the evaluation.
+    /// 异步执行 JavaScript 代码并返回结果的 JSON 字符串。
+    /// - Parameter js: 要执行的 JavaScript 代码。
+    /// - Returns: 执行结果的 JSON 字符串。
     public func evaluateJavaScript(_ js: String) async throws -> String {
         guard !destroyed else {
             throw EvalError.destroyed
         }
-        
+
         bindReturnHelperIfNeeded()
 
         let id = UUID().uuidString
-        
-        // We wrap the user's JS in an async IIFE.
-        // It executes the code, checks if it's a promise, awaits if so,
-        // and stringifies the result before sending it back via our bound helper.
+
         let wrappedJS = """
         (async function() {
             try {
@@ -313,13 +342,14 @@ public class Webview: @unchecked Sendable {
             }
         })();
         """
-        
+
         return try await withCheckedThrowingContinuation { continuation in
-            // 使用 webview_dispatch 替代 DispatchQueue.main.async，
-            // 确保在正确的事件循环线程上操作 webview
-            self.dispatch {
-                self.continuations[id] = continuation
-                self.eval(wrappedJS)
+            // dispatch 调度到 UI 线程，assumeIsolated 断言隔离以操作 @MainActor 状态
+            self.dispatch { [self] in
+                MainActor.assumeIsolated {
+                    self.continuations[id] = continuation
+                    self.eval(wrappedJS)
+                }
             }
         }
     }
