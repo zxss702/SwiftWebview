@@ -61,8 +61,7 @@ public enum SizeHint: Int32, Sendable {
 /// `@MainActor`/libdispatch 主队列互不兼容，因此从后台线程操作
 /// webview 时应通过 `dispatch(_:)` 进行调度。
 @available(macOS 10.15, *)
-@MainActor
-public final class Webview {
+public final class Webview: @unchecked Sendable {
     /// C 层 webview 指针。标记为 nonisolated(unsafe) 使
     /// nonisolated 方法（dispatch、terminate）可直接访问。
     /// 指针本身只读且线程安全，实际操作由各方法保证安全性。
