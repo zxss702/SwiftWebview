@@ -1,18 +1,18 @@
 # Swift Webview
 
-Cross platform [webview](https://github.com/webview/webview) bindings for swift.
+Swift 跨平台 [webview](https://github.com/webview/webview) 绑定库。
 
-## Dependencies
+## 依赖
 
-Depending on the target platform, you'll need to install a few things.
+根据目标平台的不同，你需要安装以下内容。
 
-### macOs
+### macOS
 
-It just works™
+开箱即用™
 
 ### Linux
 
-You'll need to install `libgtk-3-dev` and `libwebkit2gtk-4.0-dev` or your distros equivalents.
+你需要安装 `libgtk-3-dev` 和 `libwebkit2gtk-4.0-dev`，或者发行版对应的等效包。
 
 ```sh
 sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev
@@ -20,40 +20,40 @@ sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev
 
 ### Windows
 
-Windows is currently untested & not officially supported. Contributions are welcome here.
+Windows 目前尚未测试，也不被官方支持。欢迎在此贡献代码。
 
-## Usage
+## 使用方法
 
-See the generated documentation [here](https://jakenvac.github.io/SwiftWebview/).
+查看生成的文档 [点击此处](https://jakenvac.github.io/SwiftWebview/)。
 
-### Basic Usage
+### 基础用法
 
 ```swift
 import SwiftWebview
 
-// create a new webview
+// 创建一个新的 webview
 let wv = WebView()
-      // navigate to a URL
+      // 导航到指定 URL
       .navigate("https://example.com")
-      // directly set the HTML
+      // 直接设置 HTML 内容
       .setHtml("<h1>Hello World</h1>")
-      // set the title of the window
+      // 设置窗口标题
       .setTitle("My Webview Window")
-      // set the size of the window
+      // 设置窗口大小
       .setSize(800, 600, .None)
-      // inject some javascript into every new page
+      // 向每个新页面注入 JavaScript 代码
       .inject("console.log('this happens before window.onload')")
-      // asynchronously evaluate some JS in the current page
+      // 异步在当前页面执行 JavaScript
       .eval("console.log('this was evaled at runtime')")
 
-// run the webview
+// 运行 webview
 wv.run()
 
-// destroy the webview once we're done with it
+// 使用完毕后销毁 webview
 wv.destroy()
 ```
 
-### Binding functions
+### 函数绑定
 
 ```swift
 let wv = WebView()
