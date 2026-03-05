@@ -39,7 +39,7 @@
 // WebKitGTK libraries. Proper compiler flags can be retrieved via:
 //
 //   pkg-config --cflags --libs gtk4 webkitgtk-6.0
-//   pkg-config --cflags --libs gtk+-3.0 webkit2gtk-4.1
+//   pkg-config --cflags --libs gtk+-3.0 webkit2gtk-4.0
 //   pkg-config --cflags --libs gtk+-3.0 webkit2gtk-4.0
 //
 // ====================================================================

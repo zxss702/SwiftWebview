@@ -1,6 +1,6 @@
 module cWebkit2gtk [system] {
     header "webkit2/webkit2.h"
-    link "webkit2gtk-4.1"
+    link "webkit2gtk-4.0"
     export *
 }
 
