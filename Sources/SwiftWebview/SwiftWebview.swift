@@ -273,6 +273,26 @@ public final class Webview: @unchecked Sendable {
         #endif
     }
 
+    /// 当前页面 URL 字符串。
+    ///
+    /// 通过 `webview_get_native_handle` 获取底层浏览器控制器，
+    /// 在 macOS 上读取 `WKWebView.url?.absoluteString`，
+    /// 在 Linux 上调用 `webkit_web_view_get_uri()`。
+    public var currentURLString: String? {
+        guard !destroyed else { return nil }
+        let handle = webview_get_native_handle(wv, WEBVIEW_NATIVE_HANDLE_KIND_BROWSER_CONTROLLER)
+        guard let handle = handle else { return nil }
+        #if canImport(WebKit)
+        let webView = Unmanaged<WKWebView>.fromOpaque(handle).takeUnretainedValue()
+        return webView.url?.absoluteString
+        #elseif canImport(cWebkit2gtk)
+        guard let uri = webkit_web_view_get_uri(OpaquePointer(handle)) else { return nil }
+        return String(cString: uri)
+        #else
+        return nil
+        #endif
+    }
+
     // MARK: - Async Evaluation
 
     private var continuations: [String: CheckedContinuation<String, Error>] = [:]
