@@ -447,6 +447,30 @@ protected:
     return {};
   }
 
+  result<std::string> get_uri_impl() override {
+    if (!m_webview) {
+      return std::string{};
+    }
+    LPWSTR uri = nullptr;
+    auto res = m_webview->get_Source(&uri);
+    if (SUCCEEDED(res) && uri) {
+      auto result = narrow_string(uri);
+      CoTaskMemFree(uri);
+      return result;
+    }
+    if (uri) {
+      CoTaskMemFree(uri);
+    }
+    return std::string{};
+  }
+
+  result<bool> is_loading_impl() override {
+    // WebView2 does not have a direct "isLoading" property.
+    // We cannot reliably determine this without tracking navigation events.
+    // Return false as a safe default.
+    return false;
+  }
+
   noresult eval_impl(const std::string &js) override {
     // TODO: Skip if no content has begun loading yet. Can't check with
     //       ICoreWebView2::get_Source because it returns "about:blank".

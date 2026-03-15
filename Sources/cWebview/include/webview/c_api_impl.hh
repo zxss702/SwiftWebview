@@ -36,6 +36,9 @@
 #include "types.h"
 #include "version.h"
 
+#include <cstdlib>
+#include <cstring>
+
 namespace webview {
 namespace detail {
 
@@ -252,6 +255,42 @@ WEBVIEW_API webview_error_t webview_return(webview_t w, const char *id,
 
 WEBVIEW_API const webview_version_info_t *webview_version(void) {
   return &webview::detail::library_version_info;
+}
+
+WEBVIEW_API const char *webview_get_uri(webview_t w) {
+  using namespace webview::detail;
+  const char *uri = nullptr;
+  auto err = api_filter(
+      [=] { return cast_to_webview(w)->get_uri(); },
+      [&](const std::string &value) {
+        // Allocate a copy that the caller can free with webview_free_uri().
+        auto *copy = static_cast<char *>(std::malloc(value.size() + 1));
+        if (copy) {
+          std::memcpy(copy, value.c_str(), value.size() + 1);
+          uri = copy;
+        }
+      });
+  if (err == WEBVIEW_ERROR_OK) {
+    return uri;
+  }
+  return nullptr;
+}
+
+WEBVIEW_API void webview_free_uri(const char *uri) {
+  // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
+  std::free(const_cast<char *>(uri));
+}
+
+WEBVIEW_API int webview_is_loading(webview_t w) {
+  using namespace webview::detail;
+  int loading = 0;
+  auto err = api_filter(
+      [=] { return cast_to_webview(w)->is_loading(); },
+      [&](bool value) { loading = value ? 1 : 0; });
+  if (err == WEBVIEW_ERROR_OK) {
+    return loading;
+  }
+  return 0;
 }
 
 #endif // defined(__cplusplus) && !defined(WEBVIEW_HEADER)

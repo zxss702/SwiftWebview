@@ -225,6 +225,28 @@ protected:
 
     return {};
   }
+
+  result<std::string> get_uri_impl() override {
+    objc::autoreleasepool arp;
+    auto nsurl{WKWebView_get_URL(m_webview)};
+    if (!nsurl) {
+      return std::string{};
+    }
+    auto abs_string{NSURL_get_absoluteString(nsurl)};
+    if (!abs_string) {
+      return std::string{};
+    }
+    auto *utf8 = NSString_get_UTF8String(abs_string);
+    if (!utf8) {
+      return std::string{};
+    }
+    return std::string{utf8};
+  }
+
+  result<bool> is_loading_impl() override {
+    objc::autoreleasepool arp;
+    return static_cast<bool>(WKWebView_get_isLoading(m_webview));
+  }
   noresult set_html_impl(const std::string &html) override {
     objc::autoreleasepool arp;
     WKWebView_loadHTMLString(m_webview, NSString_stringWithUTF8String(html),

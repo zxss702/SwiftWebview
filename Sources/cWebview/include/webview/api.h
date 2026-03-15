@@ -244,6 +244,33 @@ WEBVIEW_API webview_error_t webview_return(webview_t w, const char *id,
  */
 WEBVIEW_API const webview_version_info_t *webview_version(void);
 
+/**
+ * Returns the current URI of the webview.
+ *
+ * The caller must free the returned string with webview_free_uri().
+ *
+ * @param w The webview instance.
+ * @return A newly allocated string containing the current URI,
+ *         or an empty string if no content has been loaded.
+ *         Returns @c NULL on error.
+ */
+WEBVIEW_API const char *webview_get_uri(webview_t w);
+
+/**
+ * Frees a URI string returned by webview_get_uri().
+ *
+ * @param uri The URI string to free.
+ */
+WEBVIEW_API void webview_free_uri(const char *uri);
+
+/**
+ * Returns whether the webview is currently loading content.
+ *
+ * @param w The webview instance.
+ * @return 1 if loading, 0 if not loading or on error.
+ */
+WEBVIEW_API int webview_is_loading(webview_t w);
+
 #ifdef __cplusplus
 }
 #endif

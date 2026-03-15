@@ -199,6 +199,19 @@ protected:
     return {};
   }
 
+  result<std::string> get_uri_impl() override {
+    auto *uri = webkit_web_view_get_uri(WEBKIT_WEB_VIEW(m_webview));
+    if (uri) {
+      return std::string{uri};
+    }
+    return std::string{};
+  }
+
+  result<bool> is_loading_impl() override {
+    return static_cast<bool>(
+        webkit_web_view_is_loading(WEBKIT_WEB_VIEW(m_webview)));
+  }
+
   noresult set_html_impl(const std::string &html) override {
     webkit_web_view_load_html(WEBKIT_WEB_VIEW(m_webview), html.c_str(),
                               nullptr);

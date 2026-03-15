@@ -135,6 +135,13 @@ window.__webview__.onUnbind(" +
   noresult run() { return run_impl(); }
   noresult terminate() { return terminate_impl(); }
   noresult dispatch(std::function<void()> f) { return dispatch_impl(f); }
+
+  /// Returns the current URI/URL of the web view, or an empty string if
+  /// no content has been loaded.
+  result<std::string> get_uri() { return get_uri_impl(); }
+
+  /// Returns whether the web view is currently loading content.
+  result<bool> is_loading() { return is_loading_impl(); }
   noresult set_title(const std::string &title) { return set_title_impl(title); }
 
   noresult set_size(int width, int height, webview_hint_t hints) {
@@ -165,6 +172,8 @@ protected:
                                  webview_hint_t hints) = 0;
   virtual noresult set_html_impl(const std::string &html) = 0;
   virtual noresult eval_impl(const std::string &js) = 0;
+  virtual result<std::string> get_uri_impl() = 0;
+  virtual result<bool> is_loading_impl() = 0;
 
   virtual user_script *add_user_script(const std::string &js) {
     return std::addressof(*m_user_scripts.emplace(m_user_scripts.end(),

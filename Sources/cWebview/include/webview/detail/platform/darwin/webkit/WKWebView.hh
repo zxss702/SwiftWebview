@@ -73,6 +73,10 @@ inline id WKWebView_get_URL(id self) {
   return objc::msg_send<id>(self, objc::selector("URL"));
 }
 
+inline BOOL WKWebView_get_isLoading(id self) {
+  return objc::msg_send<BOOL>(self, objc::selector("isLoading"));
+}
+
 inline id WKWebView_loadRequest(id self, id request) {
   return objc::msg_send<id>(self, objc::selector("loadRequest:"), request);
 }
