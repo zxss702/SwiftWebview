@@ -1,12 +1,6 @@
 import cWebview
 import Foundation
 
-#if canImport(WebKit)
-import WebKit
-#elseif canImport(cWebkit2gtk)
-import cWebkit2gtk
-#endif
-
 // MARK: - 辅助类型
 
 /// C 层回调函数签名
@@ -254,43 +248,25 @@ public final class Webview: @unchecked Sendable {
 
     // MARK: - Loading State
 
-    /// 当前页面是否正在加载。
-    ///
-    /// 通过 `webview_get_native_handle` 获取底层浏览器控制器，
-    /// 在 macOS 上读取 `WKWebView.isLoading`，
-    /// 在 Linux 上调用 `webkit_web_view_is_loading()`。
-    public var isLoading: Bool {
-        guard !destroyed else { return false }
-        let handle = webview_get_native_handle(wv, WEBVIEW_NATIVE_HANDLE_KIND_BROWSER_CONTROLLER)
-        guard let handle = handle else { return false }
-        #if canImport(WebKit)
-        let webView = Unmanaged<WKWebView>.fromOpaque(handle).takeUnretainedValue()
-        return webView.isLoading
-        #elseif canImport(cWebkit2gtk)
-        return webkit_web_view_is_loading(OpaquePointer(handle)) != 0
-        #else
-        return false
-        #endif
-    }
-
     /// 当前页面 URL 字符串。
     ///
-    /// 通过 `webview_get_native_handle` 获取底层浏览器控制器，
-    /// 在 macOS 上读取 `WKWebView.url?.absoluteString`，
-    /// 在 Linux 上调用 `webkit_web_view_get_uri()`。
+    /// 通过 cWebview C API `webview_get_uri()` 获取当前 URL，
+    /// 跨平台兼容（macOS/Linux/Windows）。
     public var currentURLString: String? {
         guard !destroyed else { return nil }
-        let handle = webview_get_native_handle(wv, WEBVIEW_NATIVE_HANDLE_KIND_BROWSER_CONTROLLER)
-        guard let handle = handle else { return nil }
-        #if canImport(WebKit)
-        let webView = Unmanaged<WKWebView>.fromOpaque(handle).takeUnretainedValue()
-        return webView.url?.absoluteString
-        #elseif canImport(cWebkit2gtk)
-        guard let uri = webkit_web_view_get_uri(OpaquePointer(handle)) else { return nil }
-        return String(cString: uri)
-        #else
-        return nil
-        #endif
+        guard let uri = webview_get_uri(wv) else { return nil }
+        let result = String(cString: uri)
+        webview_free_uri(uri)
+        return result.isEmpty ? nil : result
+    }
+
+    /// 当前页面是否正在加载。
+    ///
+    /// 通过 cWebview C API `webview_is_loading()` 获取加载状态，
+    /// 跨平台兼容（macOS/Linux/Windows）。
+    public var isLoading: Bool {
+        guard !destroyed else { return false }
+        return webview_is_loading(wv) != 0
     }
 
     // MARK: - Async Evaluation
