@@ -285,26 +285,38 @@ public final class Webview: @unchecked Sendable {
         case scriptTimeout
     }
 
-    private func bindReturnHelperIfNeeded() {
+    private static func decodeBooleanArg(_ value: Any?) -> Bool {
+        if let bool = value as? Bool {
+            return bool
+        }
+        if let number = value as? NSNumber {
+            return number.boolValue
+        }
+        if let int = value as? Int {
+            return int != 0
+        }
+        if let string = value as? String {
+            let normalized = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return normalized == "true" || normalized == "1"
+        }
+        return false
+    }
+
+    private func bindReturnHelperIfNeededOnEventLoop() {
         guard !isReturnHelperBound else { return }
         isReturnHelperBound = true
 
         self.bind("__swift_webview_return__") { [weak self] args in
             guard let id = args.first as? String else { return "{}" }
-            let isError = (args.count > 1 && args[1] as? Bool == true)
+            let isError = Self.decodeBooleanArg(args.count > 1 ? args[1] : nil)
             let resultStr = args.count > 2 ? (args[2] as? String ?? "") : ""
 
-            // dispatch 将闭包调度到 UI 事件循环线程（即主线程），
-            // 使用 assumeIsolated 断言主线程隔离以访问 @MainActor 状态
-            self?.dispatch { [weak self] in
-                MainActor.assumeIsolated {
-                    if let continuation = self?.continuations.removeValue(forKey: id) {
-                        if isError {
-                            continuation.resume(throwing: EvalError.executionError(resultStr))
-                        } else {
-                            continuation.resume(returning: resultStr)
-                        }
-                    }
+            // Binding 回调已经运行在 webview 的事件循环线程上。
+            if let continuation = self?.continuations.removeValue(forKey: id) {
+                if isError {
+                    continuation.resume(throwing: EvalError.executionError(resultStr))
+                } else {
+                    continuation.resume(returning: resultStr)
                 }
             }
 
@@ -319,8 +331,6 @@ public final class Webview: @unchecked Sendable {
         guard !destroyed else {
             throw EvalError.destroyed
         }
-
-        bindReturnHelperIfNeeded()
 
         let id = UUID().uuidString
 
@@ -350,12 +360,16 @@ public final class Webview: @unchecked Sendable {
         """
 
         return try await withCheckedThrowingContinuation { continuation in
-            // dispatch 调度到 UI 线程，assumeIsolated 断言隔离以操作 @MainActor 状态
+            // 在 webview 事件循环线程上完成绑定、continuation 注册和脚本执行。
             self.dispatch { [self] in
-                MainActor.assumeIsolated {
-                    self.continuations[id] = continuation
-                    self.eval(wrappedJS)
+                if self.destroyed {
+                    continuation.resume(throwing: EvalError.destroyed)
+                    return
                 }
+
+                self.bindReturnHelperIfNeededOnEventLoop()
+                self.continuations[id] = continuation
+                self.eval(wrappedJS)
             }
         }
     }
