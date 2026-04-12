@@ -147,7 +147,11 @@ public final class Webview: @unchecked Sendable {
     @discardableResult
     public func setSize(_ width: Int32, _ height: Int32, _ hint: SizeHint) -> Webview {
         if !destroyed {
+            #if os(Windows)
+            webview_set_size(wv, width, height, webview_hint_t(rawValue: Int32(hint.rawValue)))
+            #else
             webview_set_size(wv, width, height, webview_hint_t(rawValue: UInt32(hint.rawValue)))
+            #endif
         }
         return self
     }

@@ -40,5 +40,5 @@ let package = Package(
             dependencies: ["cWebview"]
         ),
     ],
-    cxxLanguageStandard: .cxx11
+    cxxLanguageStandard: .cxx17
 )
