@@ -12,9 +12,9 @@ let package = Package(
     targets: [
         .systemLibrary(
             name: "cWebkit2gtk",
-            pkgConfig: "webkit2gtk-6.0",
+            pkgConfig: "webkitgtk-6.0",
             providers: [
-                .apt(["libwebkit2gtk-6.0-dev"]),
+                .apt(["libwebkitgtk-6.0-dev"]),
             ]
         ),
         .target(
