@@ -816,6 +816,11 @@ private:
       return error_info{WEBVIEW_ERROR_UNSPECIFIED,
                         "put_IsStatusBarEnabled failed"};
     }
+    res = settings->put_IsWebMessageEnabled(TRUE);
+    if (res != S_OK) {
+      return error_info{WEBVIEW_ERROR_UNSPECIFIED,
+                        "put_IsWebMessageEnabled failed"};
+    }
     add_init_script("function(message) {\n\
   return window.chrome.webview.postMessage(message);\n\
 }");
