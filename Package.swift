@@ -31,7 +31,11 @@ func pkgConfig(_ arguments: [String]) -> [String] {
 }
 
 let linuxWebviewCFlags = pkgConfig(["--cflags", "webkitgtk-6.0"])
-let linuxWebviewLibs = pkgConfig(["--libs", "webkitgtk-6.0"])
+/// Swift's driver rejects pkg-config linker flags such as `-Wl,--export-dynamic`
+/// and `-pthread`. Keep the libraries; pass `--export-dynamic` via `-Xlinker`.
+let linuxWebviewLibs = pkgConfig(["--libs", "webkitgtk-6.0"]).filter { flag in
+    flag != "-pthread" && flag != "-pthreads" && !flag.hasPrefix("-Wl,")
+}
 
 var cWebviewCxxSettings: [CXXSetting] = []
 if !linuxWebviewCFlags.isEmpty {
@@ -44,6 +48,25 @@ var cWebviewLinkerSettings: [LinkerSetting] = [
 if !linuxWebviewLibs.isEmpty {
     cWebviewLinkerSettings.append(.unsafeFlags(linuxWebviewLibs, .when(platforms: [.linux])))
 }
+cWebviewLinkerSettings.append(
+    .unsafeFlags(["-Xlinker", "--export-dynamic"], .when(platforms: [.linux]))
+)
+
+#if os(Linux)
+let cWebviewDependencies: [Target.Dependency] = ["cWebkit2gtk"]
+let linuxSystemTargets: [Target] = [
+    .systemLibrary(
+        name: "cWebkit2gtk",
+        pkgConfig: "webkitgtk-6.0",
+        providers: [
+            .apt(["libwebkitgtk-6.0-dev"]),
+        ]
+    ),
+]
+#else
+let cWebviewDependencies: [Target.Dependency] = []
+let linuxSystemTargets: [Target] = []
+#endif
 
 let package = Package(
     name: "SwiftWebview",
@@ -53,24 +76,10 @@ let package = Package(
             targets: ["SwiftWebview"]
         ),
     ],
-    targets: [
-        .systemLibrary(
-            name: "cWebkit2gtk",
-            pkgConfig: "webkitgtk-6.0",
-            providers: [
-                .apt(["libwebkitgtk-6.0-dev"]),
-            ]
-        ),
+    targets: linuxSystemTargets + [
         .target(
             name: "cWebview",
-            dependencies: [
-                .target(
-                    name: "cWebkit2gtk",
-                    condition: .when(
-                        platforms: [.linux]
-                    )
-                ),
-            ],
+            dependencies: cWebviewDependencies,
             path: "Sources/cWebview",
             cxxSettings: cWebviewCxxSettings,
             linkerSettings: cWebviewLinkerSettings
