@@ -43,6 +43,8 @@ if !linuxWebviewCFlags.isEmpty {
 }
 
 var cWebviewLinkerSettings: [LinkerSetting] = [
+    .linkedFramework("Cocoa", .when(platforms: [.macOS])),
+    .linkedLibrary("comctl32", .when(platforms: [.windows])),
     .linkedFramework("WebKit", .when(platforms: [.macOS])),
 ]
 if !linuxWebviewLibs.isEmpty {
@@ -68,6 +70,12 @@ let cWebviewDependencies: [Target.Dependency] = []
 let linuxSystemTargets: [Target] = []
 #endif
 
+#if os(macOS)
+let tabSourcesExcluded = ["browser_tabs_desktop.cc"]
+#else
+let tabSourcesExcluded = ["browser_tabs_cocoa.mm"]
+#endif
+
 let package = Package(
     name: "SwiftWebview",
     products: [
@@ -81,6 +89,7 @@ let package = Package(
             name: "cWebview",
             dependencies: cWebviewDependencies,
             path: "Sources/cWebview",
+            exclude: tabSourcesExcluded,
             cxxSettings: cWebviewCxxSettings,
             linkerSettings: cWebviewLinkerSettings
         ),

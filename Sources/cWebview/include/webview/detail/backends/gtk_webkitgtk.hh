@@ -47,6 +47,8 @@
 
 #include "../../errors.hh"
 #include "../../types.hh"
+#include "browser_tabs.h"
+#include <cstdlib>
 #include "../engine_base.hh"
 #include "../platform/linux/gtk/compat.hh"
 #include "../platform/linux/webkitgtk/compat.hh"
@@ -102,7 +104,7 @@ public:
   gtk_webkit_engine(bool debug, void *window) : engine_base{!window} {
     window_init(window);
     window_settings(debug);
-    dispatch_size_default();
+    if (owns_window()) dispatch_size_default();
   }
 
   gtk_webkit_engine(const gtk_webkit_engine &) = delete;
@@ -118,8 +120,8 @@ public:
         gtk_window_close(GTK_WINDOW(m_window));
         on_window_destroyed(true);
       } else {
-        gtk_compat::window_remove_child(GTK_WINDOW(m_window),
-                                        GTK_WIDGET(m_webview));
+        if (gtk_widget_get_parent(GTK_WIDGET(m_webview)) == m_window)
+          gtk_compat::window_remove_child(GTK_WINDOW(m_window), GTK_WIDGET(m_webview));
       }
     }
     if (m_webview) {
@@ -302,7 +304,17 @@ private:
     }
     webkit_dmabuf::apply_webkit_dmabuf_workaround();
     // Initialize webview widget
-    m_webview = webkit_web_view_new();
+    const char *profile = std::getenv("LOGORYTHIA_BROWSER_PROFILE");
+    if (webview_tabs_next_related) {
+      auto *content = webkit_user_content_manager_new();
+      m_webview = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "related-view", webview_tabs_next_related, "user-content-manager", content, nullptr));
+      g_object_unref(content);
+    } else if (profile) {
+      static WebKitNetworkSession *session = webkit_network_session_new(profile, (std::string(profile) + "/cache").c_str());
+      m_webview = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "network-session", session, nullptr));
+    } else {
+      m_webview = webkit_web_view_new();
+    }
     g_object_ref_sink(m_webview);
     WebKitUserContentManager *manager = m_user_content_manager =
         webkit_web_view_get_user_content_manager(WEBKIT_WEB_VIEW(m_webview));

@@ -1,4 +1,5 @@
 module cWebview {
   header "webview.h"
+  header "browser_tabs.h"
   export *
 }

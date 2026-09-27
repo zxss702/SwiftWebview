@@ -43,6 +43,8 @@
 //
 
 #include "../../types.hh"
+#include "browser_tabs.h"
+#include <cstdlib>
 #include "../engine_base.hh"
 #include "../platform/darwin/cocoa/cocoa.hh"
 #include "../platform/darwin/objc/objc.hh"
@@ -92,7 +94,7 @@ public:
       : engine_base{!window}, m_app{NSApplication_get_sharedApplication()} {
     window_init(window);
     window_settings(debug);
-    dispatch_size_default();
+    if (owns_window()) dispatch_size_default();
   }
 
   cocoa_wkwebview_engine(const cocoa_wkwebview_engine &) = delete;
@@ -469,7 +471,14 @@ private:
   void window_settings(bool debug) {
     objc::autoreleasepool arp;
 
-    auto config{objc::autorelease(WKWebViewConfiguration_new())};
+    auto config = webview_tabs_next_configuration
+        ? (id)webview_tabs_next_configuration : objc::autorelease(WKWebViewConfiguration_new());
+    if (!webview_tabs_next_configuration) webview_tabs_configure(config);
+    // Each engine must own its bridge handlers, even for an adopted popup.
+    if (webview_tabs_next_configuration) {
+      auto controller = objc::autorelease(objc::msg_send<id>(objc::get_class("WKUserContentController"), objc::selector("new")));
+      objc::msg_send<void>(config, objc::selector("setUserContentController:"), controller);
+    }
 
     m_manager = WKWebViewConfiguration_get_userContentController(config);
 

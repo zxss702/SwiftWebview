@@ -43,6 +43,8 @@
 
 #include "../../errors.hh"
 #include "../../types.hh"
+#include "browser_tabs.h"
+#include <cstdlib>
 #include "../engine_base.hh"
 #include "../native_library.hh"
 #include "../platform/windows/com_init_wrapper.hh"
@@ -82,6 +84,8 @@
 
 namespace webview {
 namespace detail {
+
+inline ICoreWebView2Environment *tabbed_shared_environment = nullptr;
 
 using msg_cb_t = std::function<void(const std::string)>;
 
@@ -139,6 +143,9 @@ public:
   }
   HRESULT STDMETHODCALLTYPE Invoke(HRESULT res, ICoreWebView2Environment *env) {
     if (SUCCEEDED(res)) {
+      if (std::getenv("LOGORYTHIA_BROWSER_PROFILE") && !tabbed_shared_environment) {
+        env->AddRef(); tabbed_shared_environment = env;
+      }
       res = env->CreateCoreWebView2Controller(m_window, this);
       if (SUCCEEDED(res)) {
         return S_OK;
@@ -314,7 +321,7 @@ public:
   win32_edge_engine(bool debug, void *window) : engine_base{!window} {
     window_init(window);
     window_settings(debug);
-    dispatch_size_default();
+    if (owns_window()) dispatch_size_default();
   }
 
   virtual ~win32_edge_engine() {
@@ -779,8 +786,11 @@ private:
         });
 
     m_com_handler->set_attempt_handler([&] {
+      if (tabbed_shared_environment) return tabbed_shared_environment->CreateCoreWebView2Controller(wnd, m_com_handler);
+      wchar_t profile[32768]{};
+      DWORD length = GetEnvironmentVariableW(L"LOGORYTHIA_BROWSER_PROFILE", profile, 32768);
       return m_webview2_loader.create_environment_with_options(
-          nullptr, userDataFolder, nullptr, m_com_handler);
+          nullptr, length > 0 && length < 32768 ? profile : userDataFolder, nullptr, m_com_handler);
     });
     m_com_handler->try_create_environment();
 
