@@ -59,7 +59,7 @@ public final class Webview: @unchecked Sendable {
     /// C 层 webview 指针。标记为 nonisolated(unsafe) 使
     /// nonisolated 方法（dispatch、terminate）可直接访问。
     /// 指针本身只读且线程安全，实际操作由各方法保证安全性。
-    nonisolated(unsafe) private let wv: webview_t
+    nonisolated(unsafe) let wv: webview_t
 
     /// 是否已销毁。nonisolated(unsafe) 因为 deinit（nonisolated）需要读取，
     /// dispatch（nonisolated）也需要检查。写入只在 destroy() 中发生（@MainActor）。
@@ -69,8 +69,8 @@ public final class Webview: @unchecked Sendable {
 
     /// 初始化 Webview。
     /// - Parameter debug: 是否启用开发者工具。
-    public init(_ debug: Bool = false) {
-        let created = webview_create(debug ? 1 : 0, nil)
+    public init(_ debug: Bool = false, parentWindow: UnsafeMutableRawPointer? = nil) {
+        let created = webview_create(debug ? 1 : 0, parentWindow)
         guard let validWv = created else {
             fatalError("初始化 Webview 失败。在 Linux 上通常意味着没有可用的 Display/X11（尝试使用 xvfb-run）。")
         }
