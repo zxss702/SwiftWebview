@@ -37,7 +37,10 @@ let linuxWebviewLibs = pkgConfig(["--libs", "webkitgtk-6.0"]).filter { flag in
     flag != "-pthread" && flag != "-pthreads" && !flag.hasPrefix("-Wl,")
 }
 
-var cWebviewCxxSettings: [CXXSetting] = []
+// Keep Objective-C++ ownership consistent between SwiftPM and Xcode builds.
+var cWebviewCxxSettings: [CXXSetting] = [
+    .unsafeFlags(["-fobjc-arc"], .when(platforms: [.macOS])),
+]
 if !linuxWebviewCFlags.isEmpty {
     cWebviewCxxSettings.append(.unsafeFlags(linuxWebviewCFlags, .when(platforms: [.linux])))
 }
